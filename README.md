@@ -124,13 +124,20 @@ python scripts/parse.py --dataset BGL  --input data/raw/BGL.log
 # 3. Explore + quality-check (writes figures to reports/figures/)
 python scripts/explore_hdfs.py --input data/interim/HDFS.log_parsed.csv
 
-# 4. HDFS detection: block-session features + strict temporal split, then baseline
+# 4. HDFS detection: block-session features + strict temporal split
 python scripts/build_features.py \
     --input data/interim/HDFS.log_parsed.csv --labels data/raw/anomaly_label.csv
-python scripts/run_baseline.py
+python scripts/run_baseline.py          # Isolation Forest baseline  (PR-AUC 0.748)
+python scripts/train_autoencoder.py     # autoencoder detector       (PR-AUC 0.987)
 
-# (upcoming) autoencoder detector · Hawkes on BGL · LLM triage · Streamlit dashboard
+# 5. BGL Hawkes centerpiece: fit + branching ratio + time-rescaling GOF
+python scripts/fit_hawkes.py --start 2005-06-11 --hours 24 --stream all
+
+# (upcoming) LLM triage · Streamlit dashboard · EVT adaptive thresholding
 ```
+
+Results and the decisions behind them are written up under `docs/`
+(`eda_findings.md`, `detection_results.md`, `hawkes_results.md`).
 
 Parsed output lands in `data/interim/` as CSV, one row per log line. HDFS rows
 carry `timestamp, event_id, template, block_ids, …`; BGL rows carry
