@@ -42,4 +42,24 @@ HDFS = DatasetConfig(
     full_members=["HDFS.log", "preprocessed/anomaly_label.csv"],
 )
 
-DATASETS = {"HDFS": HDFS}
+BGL = DatasetConfig(
+    name="BGL",
+    # Label is the first field: '-' = non-alert, anything else = an alert tag.
+    log_format=(
+        "<Label> <Timestamp> <Date> <Node> <Time> <NodeRepeat> "
+        "<Type> <Component> <Level> <Content>"
+    ),
+    masking_regexes=[
+        r"core\.\d+",
+        r"(0x)?[0-9a-fA-F]{8,}",      # hex addresses
+        r"(\d+\.){3}\d+(:\d+)?",      # IPs
+        r"\b\d+\b",                   # bare integers
+    ],
+    drain_depth=4,
+    drain_sim_threshold=0.5,
+    sample_url="https://raw.githubusercontent.com/logpai/loghub/master/BGL/BGL_2k.log",
+    full_url="https://zenodo.org/records/8196385/files/BGL.zip?download=1",
+    full_members=["BGL.log"],  # labels are inline (Label field), no separate file
+)
+
+DATASETS = {"HDFS": HDFS, "BGL": BGL}

@@ -2,7 +2,7 @@ import pandas as pd
 
 from logtriage.data.hdfs import build_block_sessions, explode_blocks
 from logtriage.eda import data_quality_report
-from logtriage.parsing.drain_parser import BLOCK_ID_RE, _hdfs_timestamp
+from logtriage.parsing.drain_parser import BLOCK_ID_RE, _canonical_bgl, _hdfs_timestamp
 
 
 def test_block_id_regex():
@@ -14,6 +14,44 @@ def test_block_id_regex():
         "blk_-1608999687919862906"
     ]
     assert BLOCK_ID_RE.findall("no block here") == []
+
+
+def test_bgl_canonical_timestamp_and_label():
+    # mimics Drain's structured CSV columns for BGL
+    df = pd.DataFrame(
+        {
+            "Label": ["-", "KERNDTLB"],  # '-' normal, tag = alert
+            "Time": ["2005-06-03-15.42.50.675872", "2005-06-04-08.01.02.000123"],
+            "EventId": ["e1", "e2"],
+            "EventTemplate": ["t1", "t2"],
+            "Node": ["R02", "R03"],
+            "Component": ["KERNEL", "KERNEL"],
+            "Level": ["INFO", "FATAL"],
+            "Content": ["ok", "boom"],
+        }
+    )
+    out = _canonical_bgl(df)
+    assert out["label"].tolist() == [0, 1]
+    # microsecond resolution preserved
+    assert out["timestamp"][0] == pd.Timestamp("2005-06-03 15:42:50.675872")
+    assert out["timestamp"][0].microsecond == 675872
+
+
+def test_bgl_canonical_drops_unparseable_timestamps():
+    df = pd.DataFrame(
+        {
+            "Label": ["-", "-"],
+            "Time": ["2005-06-03-15.42.50.675872", "GARBAGE"],
+            "EventId": ["e1", "e2"],
+            "EventTemplate": ["t1", "t2"],
+            "Node": ["R02", "R03"],
+            "Component": ["KERNEL", "KERNEL"],
+            "Level": ["INFO", "INFO"],
+            "Content": ["ok", "bad"],
+        }
+    )
+    out = _canonical_bgl(df)
+    assert len(out) == 1  # the garbage-timestamp row is dropped
 
 
 def test_hdfs_timestamp():

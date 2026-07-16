@@ -48,12 +48,7 @@ def _hdfs_timestamp(date: pd.Series, time: pd.Series) -> pd.Series:
     return pd.to_datetime(raw, format="%y%m%d%H%M%S")
 
 
-def to_canonical(structured_csv: Path, dataset: str = "HDFS") -> pd.DataFrame:
-    """Convert Drain's structured CSV into the canonical event frame."""
-    df = pd.read_csv(structured_csv, dtype={"Date": str, "Time": str})
-    if dataset != "HDFS":
-        raise NotImplementedError(f"no canonicalizer for dataset {dataset!r} yet")
-
+def _canonical_hdfs(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(
         {
             "timestamp": _hdfs_timestamp(df["Date"], df["Time"]),
@@ -69,6 +64,39 @@ def to_canonical(structured_csv: Path, dataset: str = "HDFS") -> pd.DataFrame:
         lambda c: " ".join(dict.fromkeys(BLOCK_ID_RE.findall(str(c))))
     )
     return out
+
+
+def _canonical_bgl(df: pd.DataFrame) -> pd.DataFrame:
+    # BGL Time has microsecond resolution: '2005-06-03-15.42.50.675872'.
+    ts = pd.to_datetime(df["Time"], format="%Y-%m-%d-%H.%M.%S.%f", errors="coerce")
+    bad = ts.isna().sum()
+    if bad:
+        print(f"warning: {bad} BGL lines had unparseable timestamps; dropping them")
+    out = pd.DataFrame(
+        {
+            "timestamp": ts,
+            "event_id": df["EventId"],
+            "template": df["EventTemplate"],
+            # Label '-' = non-alert; any tag (e.g. KERNDTLB) = an alert.
+            "label": (df["Label"].astype(str) != "-").astype(int),
+            "node": df["Node"],
+            "component": df["Component"],
+            "level": df["Level"],
+            "content": df["Content"],
+        }
+    )
+    return out[out["timestamp"].notna()].reset_index(drop=True)
+
+
+_CANONICALIZERS = {"HDFS": _canonical_hdfs, "BGL": _canonical_bgl}
+
+
+def to_canonical(structured_csv: Path, dataset: str = "HDFS") -> pd.DataFrame:
+    """Convert Drain's structured CSV into the dataset's canonical event frame."""
+    df = pd.read_csv(structured_csv, dtype={"Date": str, "Time": str, "Label": str})
+    if dataset not in _CANONICALIZERS:
+        raise NotImplementedError(f"no canonicalizer for dataset {dataset!r} yet")
+    return _CANONICALIZERS[dataset](df)
 
 
 def parse_log(log_path: Path, cfg: DatasetConfig, outdir: Path | None = None) -> Path:

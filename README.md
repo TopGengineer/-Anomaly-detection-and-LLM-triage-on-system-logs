@@ -112,27 +112,36 @@ Each stage is a script; each reads the previous stage's output from `data/`.
 
 ```bash
 # 1. Get data. --sample = 2k-line sample from GitHub (fast, for development);
-#    --full = HDFS_v1 from Zenodo (~1.5 GB, includes anomaly labels).
-python scripts/download_hdfs.py --sample
-python scripts/download_hdfs.py --full
+#    --full = full dataset from Zenodo.
+python scripts/download.py --dataset HDFS --sample
+python scripts/download.py --dataset HDFS --full      # HDFS_v1, ~1.5 GB + labels
+python scripts/download.py --dataset BGL  --full      # BGL, ~700 MB, labels inline
 
 # 2. Parse raw logs into structured events with Drain
-python scripts/parse_hdfs.py --input data/raw/HDFS_2k.log
-python scripts/parse_hdfs.py --input data/raw/HDFS.log        # full dataset
+python scripts/parse.py --dataset HDFS --input data/raw/HDFS.log
+python scripts/parse.py --dataset BGL  --input data/raw/BGL.log
 
-# (upcoming) 3. Build windows/features   4. Train + evaluate   5. Triage   6. Dashboard
-streamlit run app/dashboard.py                                 # (upcoming)
+# 3. Explore + quality-check (writes figures to reports/figures/)
+python scripts/explore_hdfs.py --input data/interim/HDFS.log_parsed.csv
+
+# 4. HDFS detection: block-session features + strict temporal split, then baseline
+python scripts/build_features.py \
+    --input data/interim/HDFS.log_parsed.csv --labels data/raw/anomaly_label.csv
+python scripts/run_baseline.py
+
+# (upcoming) autoencoder detector · Hawkes on BGL · LLM triage · Streamlit dashboard
 ```
 
-Parsed output lands in `data/interim/` as CSV: one row per log line with
-`timestamp`, `event_id` (Drain template ID), `template`, `block_id`, and the raw content.
+Parsed output lands in `data/interim/` as CSV, one row per log line. HDFS rows
+carry `timestamp, event_id, template, block_ids, …`; BGL rows carry
+`timestamp, event_id, template, label, node, …` (BGL labels are inline).
 
 ## Data
 
-| Dataset | Source | Labels |
-|---|---|---|
-| HDFS_v1 | [Zenodo](https://zenodo.org/records/8196385) via loghub | per-block (`anomaly_label.csv`, ~2.9% of blocks anomalous) |
-| BGL (later) | Zenodo via loghub | per-line |
+| Dataset | Role | Source | Labels | Time resolution |
+|---|---|---|---|---|
+| HDFS_v1 | detection + triage | [Zenodo](https://zenodo.org/records/8196385) via loghub | per-block (`anomaly_label.csv`, ~2.9%) | 1 s |
+| BGL | Hawkes centerpiece | Zenodo via loghub | per-line (`Label` field, `-` = normal) | microsecond |
 
 HDFS log lines look like:
 
@@ -140,7 +149,8 @@ HDFS log lines look like:
 081109 203515 148 INFO dfs.DataNode$PacketResponder: PacketResponder 1 for block blk_38865049064139660 terminating
 ```
 
-Drain (with the loghub benchmark configuration for HDFS) turns these into a fixed
-vocabulary of ~30–50 event templates; each line becomes `(timestamp, event_id, block_id)`.
-The `block_id` is the session key: HDFS anomaly labels are per block, so sequences are
-grouped by block for evaluation.
+Drain (loghub benchmark configuration) turns these into a fixed template
+vocabulary; each line becomes `(timestamp, event_id, block_id)`. The `block_id`
+is the HDFS session key (labels are per block). BGL lines are labeled inline and
+carry microsecond timestamps — see `docs/eda_findings.md` for why that split of
+roles (HDFS for detection, BGL for the Hawkes process) is driven by the data.
