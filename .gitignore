@@ -24,6 +24,8 @@ venv/
 models/checkpoints/
 outputs/
 runs/
+reports/figures/*
+!reports/figures/.gitkeep
 
 # IDE / OS
 .vscode/

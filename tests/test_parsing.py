@@ -1,6 +1,7 @@
 import pandas as pd
 
 from logtriage.data.hdfs import build_block_sessions, explode_blocks
+from logtriage.eda import data_quality_report
 from logtriage.parsing.drain_parser import BLOCK_ID_RE, _hdfs_timestamp
 
 
@@ -49,3 +50,18 @@ def test_build_block_sessions_with_labels():
     assert sessions.loc["blk_1", "event_seq"] == ["E1", "E2"]
     assert sessions.loc["blk_1", "n_events"] == 2
     assert sessions.loc["blk_2", "label"] == 1
+
+
+def test_data_quality_report_detects_ties_and_cleanliness():
+    ev = _events()  # ts at :15, :16, :18 -> no ties, sorted, no nulls
+    ev = ev.assign(
+        template=["t1", "t2", "t1"],
+        level=["INFO", "INFO", "WARN"],
+        content=["a", "b", "c"],
+    )
+    rep = data_quality_report(ev)
+    assert rep["null_cells"] == 0
+    assert rep["exact_duplicate_rows"] == 0
+    assert rep["time_monotonic_nondecreasing"] is True
+    assert rep["same_timestamp_tie_fraction"] == 0.0
+    assert rep["n_templates"] == 2
