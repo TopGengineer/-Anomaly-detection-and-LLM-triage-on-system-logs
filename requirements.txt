@@ -22,6 +22,7 @@ matplotlib>=3.7
 requests>=2.31
 tqdm>=4.66
 
-# LLM triage (pick one at that stage; both optional for the detection pipeline)
+# LLM triage — optional backend for the triage agent. The rule-based explainer
+# runs without these; install anthropic (or ollama) to use a real model.
 # anthropic
 # ollama

@@ -139,6 +139,9 @@ python scripts/run_evt.py --q 0.03
 # 7. LLM triage: flagged blocks -> deduped, correlated, ranked incidents (JSON)
 python scripts/run_triage.py --top 200            # rule-based explainer
 python scripts/run_triage.py --top 200 --llm      # Claude (claude-opus-4-8) when a key is set
+
+# 8. Dashboard: logs in, ranked and explained incidents out
+streamlit run app/dashboard.py
 ```
 
 Results and the decisions behind them are written up under `docs/`
