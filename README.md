@@ -133,7 +133,12 @@ python scripts/train_autoencoder.py     # autoencoder detector       (PR-AUC 0.9
 # 5. BGL Hawkes centerpiece: fit + branching ratio + time-rescaling GOF
 python scripts/fit_hawkes.py --start 2005-06-11 --hours 24 --stream all
 
-# (upcoming) LLM triage · Streamlit dashboard · EVT adaptive thresholding
+# 6. Adaptive thresholding (stabilise false alarms under drift)
+python scripts/run_evt.py --q 0.03
+
+# 7. LLM triage: flagged blocks -> deduped, correlated, ranked incidents (JSON)
+python scripts/run_triage.py --top 200            # rule-based explainer
+python scripts/run_triage.py --top 200 --llm      # Claude (claude-opus-4-8) when a key is set
 ```
 
 Results and the decisions behind them are written up under `docs/`
