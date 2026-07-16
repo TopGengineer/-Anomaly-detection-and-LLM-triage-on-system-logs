@@ -34,3 +34,9 @@ reports/figures/*
 
 # Secrets
 .env
+
+# LaTeX build artifacts (keep .tex, .pdf, figures)
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.toc
