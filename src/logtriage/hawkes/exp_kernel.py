@@ -130,6 +130,31 @@ def compensator(events: np.ndarray, mu: float, alpha: float, beta: float) -> np.
     return mu * t + excite
 
 
+def intensity_on_grid(
+    events: np.ndarray, grid: np.ndarray, mu: float, alpha: float, beta: float
+) -> np.ndarray:
+    """Evaluate λ(g) = μ + α Σ_{t_i < g} e^{−β(g − t_i)} on `grid`, in O(n + m).
+
+    A single merged sweep carries the decaying excitation forward instead of
+    re-summing all past events at every grid point.
+    """
+    t = np.sort(np.asarray(events, dtype=float))
+    grid = np.asarray(grid, dtype=float)
+    out = np.full(grid.shape, mu, dtype=float)
+
+    excite = 0.0          # Σ e^{−β(now − t_i)} at `last`
+    last = grid[0] if grid[0] <= t[0] else t[0]
+    i = 0                 # next event index
+    for k, g in enumerate(grid):
+        # fold in every event strictly before g, decaying as we advance
+        while i < len(t) and t[i] < g:
+            excite = excite * np.exp(-beta * (t[i] - last)) + 1.0
+            last = t[i]
+            i += 1
+        out[k] = mu + alpha * excite * np.exp(-beta * (g - last))
+    return out
+
+
 def simulate(
     mu: float, alpha: float, beta: float, T: float, seed: int | None = None
 ) -> np.ndarray:

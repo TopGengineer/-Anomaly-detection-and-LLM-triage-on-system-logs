@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from logtriage.config import PROJECT_ROOT
-from logtriage.hawkes.exp_kernel import compensator, fit
+from logtriage.hawkes.exp_kernel import fit, intensity_on_grid
 from logtriage.hawkes.validation import ks_test_exp1, qq_points, rescaled_gaps
 
 
@@ -68,17 +68,11 @@ def _make_plots(t, f, gaps, figdir, stream, start):
 
     figdir = Path(figdir)
     figdir.mkdir(parents=True, exist_ok=True)
-    tag = f"bgl_hawkes_{stream}"
+    tag = f"bgl_hawkes_{start.date()}_{stream}"
 
-    # conditional intensity λ(t) on a grid (thinned for plotting)
-    grid = np.linspace(0, t[-1], 2000)
-    lam = np.full_like(grid, f.mu)
-    # λ(g) = mu + alpha * Σ_{t_i < g} e^{-beta (g - t_i)}
-    idx = np.searchsorted(t, grid)
-    for k, g in enumerate(grid):
-        past = t[: idx[k]]
-        if past.size:
-            lam[k] += f.alpha * np.sum(np.exp(-f.beta * (g - past)))
+    # conditional intensity λ(t) on a grid (O(n+m) sweep)
+    grid = np.linspace(0, t[-1], 4000)
+    lam = intensity_on_grid(t, grid, f.mu, f.alpha, f.beta)
     fig, ax = plt.subplots(figsize=(11, 3.5))
     ax.plot(grid, lam, lw=0.7, color="#C44E52")
     ax.set_xlabel("seconds since window start")
