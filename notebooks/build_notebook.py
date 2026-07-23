@@ -143,8 +143,80 @@ in fewer steps; the average isolation depth becomes the score. Unsupervised, fas
 reconstruct their (log-transformed, standardised) count vectors; the per-block **reconstruction MSE** is the
 anomaly score — an expert at normal patterns fumbles on patterns it never saw.
 
-Both models were trained by the pipeline scripts; their **test scores** are loaded here and all evaluation is
-recomputed live with the same `logtriage.eval.metrics` code.""")
+### 4.1 Training both models — live
+
+We first train both detectors *here in the notebook* so the full mechanism is visible (the autoencoder on a
+100k subsample of normal training blocks for speed; the pipeline's full-scale scores are used for the
+headline results afterwards, and we check the live model reaches equivalent quality).""")
+code(r"""from logtriage.models.baseline import IsolationForestBaseline
+from logtriage.models.autoencoder import AutoEncoderDetector
+from sklearn.metrics import average_precision_score
+
+is_train = (meta.split=="train").to_numpy(); is_test = ~is_train
+y_all = meta.label.to_numpy(); normal_train = is_train & (y_all==0)
+y = meta.loc[is_test,"label"].to_numpy(); ts = meta.loc[is_test,"start"]
+
+# --- Isolation Forest: full live fit (fast) ---
+if_live = IsolationForestBaseline(random_state=0).fit(X[normal_train])
+s_if_live = if_live.score(X[is_test])
+print(f"IsolationForest (live fit) : PR-AUC {average_precision_score(y, s_if_live):.3f}")
+
+# --- Autoencoder: live training on a 100k normal subsample, 25 epochs ---
+rng = np.random.default_rng(0)
+idx = rng.choice(np.flatnonzero(normal_train), size=100_000, replace=False)
+ae_live = AutoEncoderDetector(epochs=25, seed=0).fit(X[idx])
+s_ae_live = ae_live.score(X[is_test])
+print(f"Autoencoder    (live, 100k): PR-AUC {average_precision_score(y, s_ae_live):.3f}")
+
+hist = np.array(ae_live.history_)
+fig, ax = plt.subplots(figsize=(6,3.2))
+ax.plot(hist[:,0], label="train MSE"); ax.plot(hist[:,1], label="validation MSE")
+ax.set_xlabel("epoch"); ax.set_ylabel("reconstruction MSE"); ax.legend()
+ax.set_title("Autoencoder training (normal blocks only, early stopping)"); plt.show()""")
+md(r"""The live 100k-sample autoencoder already reaches the ~0.98 regime — training is stable and fast-converging
+(early stopping on a held-out *normal* slice; labels never enter). The loss curve is the whole unsupervised
+story: the network only ever learns to compress **normal** structure.
+
+### 4.2 Why it works — the anatomy of a reconstruction
+
+The detector's mechanism, made visible: one normal and one anomalous test block, their 48-template count
+vectors (model input) vs the autoencoder's reconstruction. The anomaly activates templates the model never
+learned to encode → large residual → high score.""")
+code(r"""import torch
+test_idx = np.flatnonzero(is_test)
+i_norm = test_idx[np.flatnonzero(y==0)[0]]
+i_anom = test_idx[np.flatnonzero(y==1)[np.argmax(s_ae_live[np.flatnonzero(y==1)])]]
+fig, axes = plt.subplots(1, 2, figsize=(13,3.6), sharey=True)
+for ax, i, ttl in [(axes[0], i_norm, "normal block"), (axes[1], i_anom, "anomalous block")]:
+    z = ae_live._transform(X[i:i+1])
+    with torch.no_grad():
+        rec = ae_live.model(torch.from_numpy(z)).numpy()
+    err = float(((rec - z)**2).mean())
+    ax.bar(np.arange(48)-0.2, z[0],  width=0.4, label="input (scaled counts)", color="#4C72B0")
+    ax.bar(np.arange(48)+0.2, rec[0], width=0.4, label="reconstruction", color="#C44E52")
+    ax.set_title(f"{ttl} — reconstruction MSE = {err:.3f}")
+    ax.set_xlabel("template index"); ax.legend(fontsize=8)
+plt.tight_layout(); plt.show()""")
+md(r"""### 4.3 Score distributions — what the detector actually separates
+
+Histograms of the (log) reconstruction error for normal vs anomalous test blocks. Two things to see:
+the separation that produces PR-AUC 0.987, **and** the huge spike of identical scores among normals —
+58.7% of normal blocks share *one* value (normal HDFS sessions are byte-identical). That discreteness is
+what later breaks EVT (§7).""")
+code(r"""s_full = np.load(DATA_PROCESSED/"ae_scores_test.npy")
+ls_full = np.log10(np.maximum(s_full, 1e-12))
+fig, ax = plt.subplots(figsize=(9,3.6))
+ax.hist(ls_full[y==0], bins=80, alpha=.7, label="normal", color="#4C72B0", log=True)
+ax.hist(ls_full[y==1], bins=80, alpha=.7, label="anomaly", color="#C44E52", log=True)
+ax.set_xlabel("log10(reconstruction MSE)"); ax.set_ylabel("blocks (log)"); ax.legend()
+ax.set_title("Score distributions on the test split — note the giant atom of identical normal scores")
+plt.show()
+vals, counts = np.unique(s_full[y==0], return_counts=True)
+print(f"largest atom: {counts.max():,} of {int((y==0).sum()):,} normal blocks ({counts.max()/(y==0).sum():.1%}) share one identical score")""")
+md(r"""### 4.4 Headline results at full scale
+
+The pipeline's full-scale models (autoencoder trained on all 389k normal training blocks): scores loaded,
+**all evaluation recomputed live** with `logtriage.eval.metrics`.""")
 code(r"""from sklearn.metrics import precision_recall_curve, average_precision_score
 from logtriage.eval.metrics import false_alarms_per_day, drift_report
 
@@ -168,7 +240,7 @@ md(r"""**Reading.** The autoencoder (PR-AUC **0.987** vs chance 0.022) cuts fals
 90% detection rate. *Positioning*: this reproduces a heavily-published benchmark result — its role is to
 validate the pipeline and feed realistic scores to the later stages, not to claim novelty.
 
-### 4.1 Drift decomposition
+### 4.5 Drift decomposition
 Aggregate numbers can hide instability. Same threshold, four consecutive time slices:""")
 code(r"""print("Isolation Forest:"); display(drift_report(y, s_if, ts, n_bins=4, target_recall=0.90).round(3))
 print("Autoencoder:");      display(drift_report(y, s_ae, ts, n_bins=4, target_recall=0.90).round(3))""")
@@ -314,10 +386,30 @@ from ~3.7k to ~862k/day across five hours — undeployable.
 Pareto law (Pickands–Balkema–de Haan); fitting its tail and inverting gives the level $z_q$ crossed with
 target probability $q$, re-estimated on a trailing window → a self-calibrating threshold (SPOT).
 
-**Honest negative finding.** HDFS scores are **discrete** — 58.7% of normal blocks share *one identical*
-reconstruction error (normal sessions are byte-identical) — violating GPD's continuous-tail hypothesis; the
-extrapolation misbehaves. Fix: a **distribution-free rolling quantile** on HDFS; EVT is reserved for
-continuous scores (e.g. the BGL timing features). Below, fixed vs adaptive, live:""")
+### 7.1 EVT demonstrated — where it works and where it breaks
+
+Before applying anything to HDFS, we show the EVT machinery doing its job on *continuous* data, live:
+calibrate a POT threshold at target rate q on one exponential sample, verify the empirical exceedance rate
+on a fresh sample, and show it *tracking drift* where a fixed threshold fails.""")
+code(r"""from logtriage.eval.evt import pot_threshold, AdaptivePot
+rng = np.random.default_rng(0)
+# (a) rate control on stationary continuous scores
+calib_c = rng.exponential(1.0, 200_000); fresh = rng.exponential(1.0, 200_000)
+z = pot_threshold(calib_c, q=0.01, init_level=0.95).z
+print(f"(a) stationary: target q=1.00% | empirical exceedance on fresh sample = {(fresh>z).mean():.2%}")
+# (b) drift tracking: scale ramps 1 -> 3
+n = 120_000; drifting = rng.exponential(np.linspace(1, 3, n))
+z_fix = pot_threshold(calib_c, q=0.01, init_level=0.95).z
+ad = AdaptivePot(q=0.01, window=20_000, stride=500, init_level=0.95).fit(calib_c)
+fl, _ = ad.run(drifting)
+print(f"(b) under drift, last third: fixed threshold flags {(drifting[-40_000:]>z_fix).mean():.1%}  |  adaptive EVT flags {fl[-40_000:].mean():.1%}  (target 1%)")""")
+md(r"""EVT holds the target rate on continuous scores and keeps holding it under drift — the tool *works*.
+
+**Honest negative finding.** The HDFS scores are **discrete** — as measured in §4.3, 58.7% of normal blocks
+share *one identical* reconstruction error — violating GPD's continuous-tail hypothesis: the tail fit sees a
+giant atom, and the extrapolated threshold can fall below the data floor (flagging everything). Fix: a
+**distribution-free rolling quantile** on HDFS; EVT stays reserved for continuous scores (e.g. the BGL
+timing features). Below, fixed vs adaptive on the real HDFS stream, live:""")
 code(r"""from logtriage.eval.evt import RollingQuantile
 test_sorted = te.copy(); test_sorted["raw"] = s_ae; test_sorted = test_sorted.sort_values("start")
 ls = np.log(np.maximum(test_sorted["raw"].to_numpy(), 1e-12))
