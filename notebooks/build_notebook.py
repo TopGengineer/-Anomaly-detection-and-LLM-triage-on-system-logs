@@ -252,7 +252,12 @@ md(r"""## 5. Detection models — implemented and trained here
 ### 5.1 Isolation Forest (baseline)
 Anomalies are "few and different": random axis-aligned splits isolate them in fewer steps; average
 isolation depth ⇒ score. We wrap sklearn's implementation with a `log1p` transform (counts are
-heavy-tailed) and score orientation "higher = more anomalous".""")
+heavy-tailed) and score orientation "higher = more anomalous".
+
+*Training-set note:* the IF is fit on the **full unlabelled training period** (its standard usage —
+the algorithm tolerates the ~3% contamination by design and needs the anomalous region represented
+to isolate it), whereas the autoencoder (§5.2) uses **normal blocks only** (it must model pure
+normality). Both respect the leakage rules: no test-period data, no labels used by the IF.""")
 code(r"""from sklearn.ensemble import IsolationForest
 
 class IFDetector:
@@ -264,7 +269,7 @@ is_train = (meta.split=="train").to_numpy(); is_test = ~is_train
 y_all = meta.label.to_numpy(); normal_train = is_train & (y_all==0)
 y = y_all[is_test]; ts = meta.start[is_test]
 
-if_model = IFDetector(seed=0).fit(X[normal_train])
+if_model = IFDetector(seed=0).fit(X[is_train])      # full unlabelled training period
 s_if = if_model.score(X[is_test])
 print(f"IsolationForest: PR-AUC {average_precision_score(y, s_if):.3f}")""")
 md(r"""### 5.2 Autoencoder (the detector) — full implementation
